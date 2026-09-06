@@ -4,4 +4,4 @@ metadata:
   name: scan-config
   namespace: hello-world
 data:
-  image: nginx:1.27.5-alpine
+  image: ghcr.io/sesamesesamum/example_k8s@sha256:5eeeb99aa6a30f83b8fc23242cfb7179a9b603cfbb88e95a8880776d378d7d14

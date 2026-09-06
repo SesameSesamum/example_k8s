@@ -67,17 +67,15 @@ The image and Pod run with security controls including non-root execution, dropp
 
 ### Outcome 3: The application reaches the cluster through automation
 
-**Fulfilled through GitOps.** GitHub Actions is the CI stage: it builds, scans, generates an SBOM, publishes the image, and updates the Git-managed image reference. Argo CD is the continuous delivery stage: it watches `main`, sees that commit, and syncs `k8s/` into Minikube.
+**Fulfilled.** GitHub Actions is the CI stage: it builds, scans, generates an SBOM, publishes the image, and updates the Git-managed image reference. Argo CD is the continuous delivery stage: it watches `main`, sees that commit, and syncs `k8s/` into Minikube.
 
-The workflow includes a temporary, manual-only `bootstrap_publish` option so the first GHCR image can be published for demonstration. It reports Trivy findings without blocking that one bootstrap run. After the image exists, remove that option and restore the normal blocking-only scan path; it must not be used as a production exception.
+Usually the GitHub actions pipeline blocks if the Trivy scan detect any CRITICAL or HIGH vulnerabilities, of which this nginx-image has a ton. I've added a skip-scan input just to be able to push the initial image onto the GHCR for our demonstration.
 
-The local image build and Minikube preparation are manual during initial local setup because a hosted GitHub runner cannot reach a laptop-local cluster. Once the workflow publishes a passing image and updates Git, Argo CD performs the deployment from Git. AKS could use the same GHCR image and Argo CD configuration after configuring AKS pull access to the private GHCR package.
+Once the workflow publishes a passing image and updates Git, Argo CD performs the deployment from Git, even if Argo is in our local minikube cluster AKS could use the same GHCR image and Argo CD configuration.
 
 ### Outcome 4: Scheduled vulnerability scanning runs inside Kubernetes
 
 **Fulfilled, with limited alerting.** `k8s/trivy-cronjob.yaml` runs daily, downloads the vulnerability database, scans the configured registry image, and fails on HIGH or CRITICAL findings. Job status and logs are the human-visible result in this demonstration.
-
-The tested scan produced 32 HIGH and 2 CRITICAL findings. The failed Job was intentional because the command uses `--exit-code 1`. Production would connect Job failures to Teams, Slack, PagerDuty, or another alerting system. That notification integration is not implemented here.
 
 ### Outcome 5: Unauthenticated users cannot reach the page
 
