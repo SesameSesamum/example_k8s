@@ -8,8 +8,9 @@ A small DevSecOps demonstration for a static nginx page running on a local Minik
 - Kubernetes runs one restricted Deployment behind a ClusterIP Service.
 - Minikube's nginx ingress controller protects the page with HTTP basic authentication.
 - A scheduled Trivy CronJob scans the registry image and fails for HIGH or CRITICAL vulnerabilities.
-- GitHub Actions builds, scans, generates an SBOM, and publishes to GHCR.
-- An optional self-hosted GitHub Actions runner on the Windows machine applies the manifests to Minikube. A hosted runner cannot reach a laptop-local cluster.
+- GitHub Actions builds, scans, generates an SBOM, and publishes to GHCR for the eventual AKS delivery path.
+- The local Minikube deployment is performed manually using the same build, scan, and Kubernetes commands for demonstration only.
+- Argo CD provides the optional GitOps delivery path by watching this repository and syncing `k8s/` into Minikube.
 
 ## Local prerequisites
 
@@ -18,10 +19,107 @@ Install and expose these commands in PowerShell:
 - Docker Desktop
 - Minikube
 - kubectl
-- Trivy CLI (optional, but recommended for the local demo)
+- Trivy CLI
 - Git
 
 The build and deployment commands below are intended for PowerShell.
+
+## Manual local equivalent of the pipeline
+
+The GitHub Actions workflow describes the future AKS path. For this assessment, Minikube replaces AKS only for the local runtime demonstration, so the pipeline steps are performed manually on this Windows machine:
+
+| Pipeline step | Local equivalent |
+| --- | --- |
+| Build the image | `docker build --tag hello-world:local .` |
+| Scan the image | `trivy image --severity HIGH,CRITICAL --ignore-unfixed hello-world:local` |
+| Generate an SBOM | `trivy image --format spdx-json --output sbom-hello-world.spdx.json hello-world:local` |
+| Make the image available to the cluster | `minikube image load hello-world:local` |
+| Scan Kubernetes configuration | `trivy config --severity HIGH,CRITICAL k8s/` |
+| Deploy the manifests | `kubectl apply -k k8s` |
+| Verify the rollout | `kubectl -n hello-world rollout status deployment/hello-world` |
+
+## Demonstration
+
+Run the equivalent sequence from the repository root:
+
+```powershell
+# Build the image described by Dockerfile.
+docker build --tag hello-world:local .
+
+# Scan the same image that will be demonstrated locally.
+trivy image --severity HIGH,CRITICAL --ignore-unfixed hello-world:local
+$imageScanExitCode = $LASTEXITCODE
+Write-Output "Image scan exit code: $imageScanExitCode"
+
+# Generate the local equivalent of the CI SBOM artifact.
+trivy image --format spdx-json --output sbom-hello-world.spdx.json hello-world:local
+
+# Scan the Kubernetes configuration before applying it.
+trivy config --severity HIGH,CRITICAL k8s/
+
+# Start Minikube and make the locally built image available to its node.
+minikube start --driver=docker
+minikube addons enable ingress
+minikube image load hello-world:local
+
+# Create the demo authentication Secret without committing its password.
+$auth = (docker run --rm httpd:2.4-alpine htpasswd -nbB demo 'change-me' | Out-String).Trim()
+kubectl create namespace hello-world --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n hello-world create secret generic hello-world-auth --from-literal=auth=$auth --dry-run=client -o yaml | kubectl apply -f -
+
+# Deploy and verify the local Kubernetes workload.
+kubectl apply -k k8s
+kubectl -n hello-world rollout status deployment/hello-world --timeout=120s
+kubectl -n hello-world get pods,svc,ingress,cronjob
+```
+
+The image scan may return exit code `1` because the current nginx base image has known HIGH or CRITICAL findings. That is the intended security-gate behavior: record and investigate the findings rather than treating them as a successful release. The remaining commands are still useful for demonstrating the local runtime.
+
+The local image exists only inside Docker Desktop and Minikube, so the in-cluster CronJob cannot scan `hello-world:local` directly. For the scheduled scan demonstration, configure `k8s/scan-config.yaml` or the live ConfigMap with a registry image that the Trivy Pod can pull, then trigger the CronJob manually as shown below. In the future AKS design, this will be the image published by the GitHub Actions workflow.
+
+## Argo CD GitOps demonstration
+
+Argo CD provides continuous delivery: it watches the public GitHub repository and applies changes from `main` into Minikube. GitHub Actions remains responsible for CI: building, scanning, and generating the SBOM.
+
+Before applying the Argo CD Application, commit and push `k8s/` and `argocd/application.yaml` to `main`. Argo CD reads GitHub, not uncommitted local files. Do not commit the generated `hello-world-auth` Secret.
+
+```powershell
+git add .dockerignore .gitignore Dockerfile README.md .github k8s nginx scripts argocd
+git commit -m "Add Argo CD GitOps delivery"
+git push origin main
+```
+
+Install Argo CD into Minikube:
+
+```powershell
+minikube start --driver=docker
+kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply --server-side --force-conflicts -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+kubectl -n argocd wait --for=condition=Available deployment/argocd-server --timeout=300s
+```
+
+Create the local authentication Secret, build/load the local image, and register the Git-tracked Application:
+
+```powershell
+$auth = (docker run --rm httpd:2.4-alpine htpasswd -nbB demo 'change-me' | Out-String).Trim()
+kubectl create namespace hello-world --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n hello-world create secret generic hello-world-auth --from-literal=auth=$auth --dry-run=client -o yaml | kubectl apply -f -
+docker build --tag hello-world:local .
+minikube image load hello-world:local
+kubectl apply -f argocd/application.yaml
+kubectl -n argocd get application hello-world
+```
+
+Argo should report `Synced` and `Healthy`. To demonstrate reconciliation, edit `nginx/index.html`, commit, and push to `main`; Argo will detect the Git change and sync it into Minikube:
+
+```powershell
+git add nginx/index.html
+git commit -m "Update hello world page"
+git push origin main
+kubectl -n argocd get application hello-world -w
+```
+
+For production AKS, GitHub Actions would publish the scanned image to ACR and Argo CD would deploy an immutable image digest or release tag. Do not use `hello-world:local` in AKS.
 
 ## Repository guide
 
@@ -40,7 +138,8 @@ The build and deployment commands below are intended for PowerShell.
 | `k8s/trivy-cronjob.yaml` | Re-scans the configured registry image on a schedule and fails on HIGH/CRITICAL findings. |
 | `k8s/scan-config.yaml` | Holds the image reference used by the scheduled scan. Replace the placeholder with your GHCR image. |
 | `k8s/kustomization.yaml` | Applies the Kubernetes resources as one repeatable unit. |
-| `.github/workflows/build-scan-deploy.yml` | Builds, scans, creates an SBOM, publishes to GHCR, and optionally deploys using a self-hosted runner. |
+| `argocd/application.yaml` | Defines the Argo CD Application that watches `main` and automatically syncs `k8s/` to Minikube. |
+| `.github/workflows/build-scan-deploy.yml` | Builds, scans, creates an SBOM, and publishes to GHCR for the future AKS delivery path. |
 | `scripts/validate.ps1` | Performs quick repository checks for required files and core security settings. |
 | `README.md` | Documents the architecture, demo, security choices, and production follow-up. |
 
@@ -136,9 +235,9 @@ This is separate from image scanning. Image scanning finds vulnerable packages; 
 
 ### 8. Show the GitHub Actions path
 
-Push a branch and open a pull request to show the build and blocking image scan. Merge to `main` to publish the image and SBOM to GHCR. To deploy to local Minikube from Actions, register a self-hosted runner on this Windows machine with labels `self-hosted`, `windows`, and `minikube`, then manually run the workflow with `deploy_local=true`.
+Push a branch and open a pull request to show the build and blocking image scan. Merge to `main` to publish the image and SBOM to GHCR. You can also use the `workflow_dispatch` option in GitHub Actions to run the build and scan manually.
 
-The hosted runner can build and publish, but it cannot normally reach Minikube on your laptop. The self-hosted runner is only a local assessment solution; production should use a pull-based deployer inside a private AKS cluster.
+This workflow represents the future AKS delivery path. It intentionally does not deploy to local Minikube: a hosted GitHub runner cannot reach a laptop-local cluster, and no self-hosted runner is part of this demonstration. The Minikube commands above are the local substitute for demonstrating the runtime configuration. In production, the published image would be deployed to private AKS by a pull-based deployer such as Flux or Argo CD, or by an AKS-connected deployment stage.
 
 ### 9. Clean up
 
@@ -146,55 +245,6 @@ The hosted runner can build and publish, but it cannot normally reach Minikube o
 kubectl delete namespace hello-world
 minikube stop
 ```
-
-## Run locally
-
-```powershell
-minikube start --driver=docker
-minikube addons enable ingress
-
-docker build -t hello-world:local .
-minikube image load hello-world:local
-```
-
-Create the demo basic-auth secret. This uses Docker to generate the bcrypt value, so the plaintext password is not stored in Git:
-
-```powershell
-$auth = (docker run --rm httpd:2.4-alpine htpasswd -nbB demo 'change-me' | Out-String).Trim()
-kubectl create namespace hello-world --dry-run=client -o yaml | kubectl apply -f -
-kubectl -n hello-world create secret generic hello-world-auth --from-literal=auth=$auth --dry-run=client -o yaml | kubectl apply -f -
-```
-
-Apply the application:
-
-```powershell
-kubectl apply -k k8s
-kubectl -n hello-world get pods,svc,ingress,cronjob
-```
-
-Add the ingress address to the Windows hosts file as Administrator. Get the address with:
-
-```powershell
-minikube ip
-```
-
-Add a line such as this to `C:\Windows\System32\drivers\etc\hosts`:
-
-```text
-<minikube-ip> hello-world.local
-```
-
-Open `http://hello-world.local` and authenticate with `demo` / `change-me`. Replace that demo password before presenting the solution.
-
-The scan CronJob is configured for the GHCR image in `k8s/scan-config.yaml`. For a local-only run, use a public registry image or change the ConfigMap to an image Trivy can pull. Trigger a scan immediately with:
-
-```powershell
-kubectl -n hello-world create job --from=cronjob/hello-world-vulnerability-scan scan-now
-kubectl -n hello-world logs -f job/scan-now
-kubectl -n hello-world get jobs
-```
-
-A failed Job is intentional when the configured severity threshold is met. Its status and logs are the first human-visible signal. In production, the Job failure would feed an alerting rule or a Teams/Slack/PagerDuty webhook.
 
 ## GitHub Actions
 
@@ -207,9 +257,7 @@ The workflow in `.github/workflows/build-scan-deploy.yml` runs on pull requests 
 
 The workflow uses the short-lived `GITHUB_TOKEN`; no registry password is committed. Repository Actions settings must allow the workflow to write packages. For a demo, make the GHCR package public or configure an image pull secret in the cluster. A production AKS deployment should use Azure Workload Identity and an ACR pull role rather than a long-lived registry secret.
 
-To deploy through GitHub Actions, register a self-hosted runner on the Windows machine with labels `self-hosted`, `windows`, and `minikube`. The runner must have Docker Desktop, Minikube, kubectl, and a running Minikube cluster. Start the workflow manually and set `deploy_local` to `true`. The deploy job applies the manifests and updates the Deployment and scan target to the scanned commit image.
-
-The self-hosted runner is useful for this local assessment but would be isolated and tightly controlled in a real environment. The preferred production design is hosted CI publishing to ACR and a pull-based deployer such as Flux or Argo CD inside a private AKS cluster.
+The workflow does not deploy to local Minikube. The local commands in the demo walkthrough are intentionally manual because Minikube substitutes for AKS only during the local demonstration. The preferred production design is hosted CI publishing to ACR and a pull-based deployer such as Flux or Argo CD inside a private AKS cluster.
 
 ## Security decisions
 
@@ -236,7 +284,7 @@ When a critical vulnerability has no fix, the response is to confirm exploitabil
 
 ## What is implemented versus designed
 
-Implemented: Docker image, static page, Kubernetes Deployment/Service/Ingress, basic auth, network policy, scheduled Trivy scan, GitHub Actions build/scan/SBOM/publish workflow, and optional local self-hosted deployment job.
+Implemented: Docker image, static page, Kubernetes Deployment/Service/Ingress, basic auth, network policy, scheduled Trivy scan, local Minikube demonstration, and a GitHub Actions build/scan/SBOM/publish workflow for the future AKS delivery path.
 
 Designed but not provisioned: AKS, ACR, private networking, Entra ID, Workload Identity, centralized alerting, admission policy, and production TLS/DNS. Those are intentionally discussed rather than represented by untested Terraform.
 
