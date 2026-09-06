@@ -6,10 +6,10 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
-      bootstrap_publish:
-        description: Temporary bootstrap only publish the image even when Trivy finds vulnerabilities
+      skip_scan:
+        description: Skip Trivy scan to force the image into the GHCR
         required: true
-        default: true
+        default: false
         type: boolean
 
 permissions:
@@ -42,8 +42,9 @@ jobs:
           push: false
           tags: ${{ env.IMAGE }}
 
+      # Scan image using Trivy, report on vulnerabilities, block if CRITICAL or HIGH vulnerabilities are found
       - name: Scan image for blocking vulnerabilities
-        if: inputs.bootstrap_publish != true
+        if: inputs.skip_scan != true
         id: trivy-blocking
         continue-on-error: true
         uses: aquasecurity/trivy-action@v0.36.0
@@ -56,7 +57,7 @@ jobs:
           severity: CRITICAL,HIGH
 
       - name: Report and enforce vulnerability threshold
-        if: inputs.bootstrap_publish != true
+        if: inputs.skip_scan != true
         shell: bash
         run: |
           if [ ! -f trivy-results.json ]; then
@@ -75,8 +76,8 @@ jobs:
 
           echo "Trivy security gate passed: no HIGH or CRITICAL vulnerabilities discovered."
 
-      - name: Bootstrap scan report (non-blocking, temporary)
-        if: inputs.bootstrap_publish == true
+      - name: Bootstrap scan report
+        if: inputs.skip_scan == true
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.IMAGE }}
@@ -85,10 +86,12 @@ jobs:
           ignore-unfixed: true
           severity: CRITICAL,HIGH
 
+      # Push image to GHCR ONLY if not a pull request
       - name: Push scanned image
         if: github.event_name != 'pull_request'
         run: docker push "${{ env.IMAGE }}"
 
+      # Updates the image reference in the GitOps deployment manifest and commits the change to the main branch
       - name: Update GitOps image reference
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         shell: bash
