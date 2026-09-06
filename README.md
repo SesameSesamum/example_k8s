@@ -57,7 +57,7 @@ These are the five outcomes from the assessment brief.
 
 ### Outcome 1: The page is served from an image you built
 
-**Fulfilled.** `Dockerfile` builds the nginx image. During local iteration it can be tagged `hello-world:local` and loaded into Minikube; GitHub Actions builds, scans, and publishes the same image to GHCR, then updates the Deployment to the immutable scanned commit-SHA image. Argo CD deploys that image, and AKS could pull it after registry access is configured.
+**Fulfilled.** GitHub Actions builds, scans, and publishes the same image to GHCR, then updates the Deployment to the immutable scanned commit-SHA image. Argo CD deploys that image in our local minikube cluster, and in the future solution AKS could pull it after registry access is configured. 
 
 The image and Pod run with security controls including non-root execution, dropped capabilities, disabled privilege escalation, a default seccomp profile, a read-only root filesystem, probes, and resource limits.
 
