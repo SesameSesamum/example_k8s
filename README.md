@@ -188,6 +188,7 @@ Synced / Healthy
 ```
 
 To demonstrate reconciliation, edit `nginx/index.html`, commit, and push to `main`:
+Or delete the deployment using kubectl delete deployment hello-world -n hello-world
 
 ```powershell
 git add nginx/index.html

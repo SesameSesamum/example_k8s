@@ -1,4 +1,4 @@
-FROM ghcr.io/sesamesesamum/example_k8s:b1ef4270271b2b86a5baeb54ff2d6801c48eaa7e
+FROM ghcr.io/sesamesesamum/example_k8s:latest
 
 USER root
 
