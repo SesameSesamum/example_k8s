@@ -1,0 +1,88 @@
+name: Build, scan and deploy
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy_local:
+        description: Deploy to the configured local Minikube self-hosted runner
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}:${{ github.sha }}
+
+jobs:
+  build-and-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ env.IMAGE }}
+
+      - name: Scan image for blocking vulnerabilities
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.IMAGE }}
+          format: table
+          exit-code: 1
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.IMAGE }}
+          artifact-name: sbom-${{ github.sha }}.spdx.json
+          output-file: sbom-${{ github.sha }}.spdx.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ github.sha }}
+          path: sbom-${{ github.sha }}.spdx.json
+
+  deploy-local:
+    needs: build-and-scan
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy_local == true
+    runs-on: [self-hosted, windows, minikube]
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Apply manifests to Minikube
+        shell: pwsh
+        run: kubectl apply -k k8s
+
+      - name: Use the scanned registry image
+        shell: pwsh
+        run: |
+          kubectl -n hello-world set image deployment/hello-world nginx=${env:IMAGE}
+          kubectl -n hello-world set image cronjob/hello-world-vulnerability-scan trivy=aquasec/trivy:0.58.1
+          kubectl -n hello-world create configmap scan-config --from-literal=image=${env:IMAGE} --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n hello-world rollout status deployment/hello-world --timeout=120s

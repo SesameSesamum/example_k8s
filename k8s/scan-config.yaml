@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scan-config
+  namespace: hello-world
+data:
+  image: ghcr.io/REPLACE_WITH_GITHUB_OWNER/hello-world:main

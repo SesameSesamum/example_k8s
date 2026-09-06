@@ -1,0 +1,61 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hello-world-vulnerability-scan
+  namespace: hello-world
+  labels:
+    app.kubernetes.io/name: hello-world-vulnerability-scan
+spec:
+  schedule: "17 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: hello-world-vulnerability-scan
+        spec:
+          restartPolicy: Never
+          serviceAccountName: hello-world
+          automountServiceAccountToken: false
+          securityContext:
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: trivy
+              image: aquasec/trivy:0.58.1
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/sh
+                - -c
+                - >-
+                  trivy image
+                  --severity HIGH,CRITICAL
+                  --ignore-unfixed=false
+                  --exit-code 1
+                  --no-progress
+                  "${IMAGE}"
+              env:
+                - name: IMAGE
+                  valueFrom:
+                    configMapKeyRef:
+                      name: scan-config
+                      key: image
+                - name: TRIVY_CACHE_DIR
+                  value: /tmp/trivy-cache
+              securityContext:
+                runAsNonRoot: true
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              volumeMounts:
+                - name: trivy-cache
+                  mountPath: /tmp/trivy-cache
+          volumes:
+            - name: trivy-cache
+              emptyDir: {}
