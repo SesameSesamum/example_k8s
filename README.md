@@ -121,7 +121,7 @@ The image scan may return exit code `1` because vulnerabilities are present. Tha
 minikube start --driver=docker --ports=127.0.0.1:18080:30080
 minikube addons enable ingress
 kubectl -n ingress-nginx patch service ingress-nginx-controller --type=merge -p --% "{\"spec\":{\"ports\":[{\"name\":\"http\",\"port\":80,\"targetPort\":\"http\",\"protocol\":\"TCP\",\"nodePort\":30080},{\"name\":\"https\",\"port\":443,\"targetPort\":\"https\",\"protocol\":\"TCP\",\"nodePort\":30443}]}}"
-minikube image load hello-world:local
+minikube image load ghcr.io/sesamesesamum/example_k8s:latest
 
 $auth = (docker run --rm httpd:2.4-alpine htpasswd -nbB demo 'change-me' | Out-String).Trim()
 kubectl create namespace hello-world --dry-run=client -o yaml | kubectl apply -f -
