@@ -45,8 +45,9 @@ jobs:
           context: .
           load: true
           push: false
-          tags: ${{ env.IMAGE }}
-                ghcr.io/${{ github.repository }}:latest
+          tags: |
+            ${{ env.IMAGE }}
+            ghcr.io/${{ github.repository }}:latest
 
       # Scan image using Trivy, report on vulnerabilities, block if CRITICAL or HIGH vulnerabilities are found
       - name: Scan image for blocking vulnerabilities
