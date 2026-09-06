@@ -1,6 +1,4 @@
-FROM ghcr.io/sesamesesamum/example_k8s:latest
-
-USER root
+FROM nginx:1.27.5-alpine
 
 COPY nginx/nginx.conf /etc/nginx/nginx.conf
 COPY nginx/index.html /usr/share/nginx/html/index.html
