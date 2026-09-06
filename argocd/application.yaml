@@ -8,7 +8,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/SesameSesamum/example_k8s.git
+    repoURL: https://github.com/sesamesesamum/example_k8s.git
     targetRevision: main
     path: k8s
   destination:
