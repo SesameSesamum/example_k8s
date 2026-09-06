@@ -96,7 +96,9 @@ jobs:
       # Push image to GHCR ONLY if not a pull request
       - name: Push scanned image
         if: github.event_name != 'pull_request'
-        run: docker push "${{ env.IMAGE }}"
+        run: |
+          docker push "${{ env.IMAGE }}"
+          docker push "ghcr.io/${{ github.repository }}:latest"
 
       # Updates the image reference in the GitOps deployment manifest and commits the change to the main branch
       - name: Update GitOps image reference
