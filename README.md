@@ -19,16 +19,16 @@ GitHub Actions: build -> scan -> SBOM -> publish to GHCR
 | `nginx/index.html` | Static hello-world page. |
 | `nginx/nginx.conf` | Runs nginx on unprivileged port `8080` and sends logs to container output. |
 | `Dockerfile` | Builds the pinned Alpine nginx image and runs it as user `nginx`. |
-| `k8s/deployment.yaml` | Runs the application with non-root execution, read-only root filesystem, dropped capabilities, probes, and resource limits. |
+| `k8s/deployment.yaml` | Runs the application with non-root execution, read-only root filesystem, dropped capabilities, probes, and resource limits. GitHub Actions updates its image reference to the scanned GHCR SHA. |
 | `k8s/service.yaml` | Provides internal ClusterIP access to the application. |
 | `k8s/ingress.yaml` | Provides HTTP access with nginx basic authentication. |
 | `k8s/serviceaccount.yaml` | Gives the workload no API permissions and no mounted token. |
 | `k8s/network-policy.yaml` | Restricts application traffic to ingress-nginx and DNS egress. |
 | `k8s/trivy-cronjob.yaml` | Runs the scheduled in-cluster Trivy scan and fails on HIGH or CRITICAL findings. |
-| `k8s/scan-config.yaml` | Selects the registry image scanned by the CronJob. It uses pinned public nginx for the local demo. |
+| `k8s/scan-config.yaml` | Selects the registry image scanned by the CronJob. It uses pinned public nginx for the local demo; production can point to the GHCR image. |
 | `k8s/kustomization.yaml` | Applies the Kubernetes resources as one unit. |
 | `argocd/application.yaml` | Tells Argo CD to watch `main` and sync `k8s/` into the cluster. |
-| `.github/workflows/build-scan-deploy.yml` | Future AKS CI: builds, scans, generates an SBOM, and publishes to GHCR. |
+| `.github/workflows/build-scan-deploy.yml` | CI pipeline: builds, scans, generates an SBOM, and publishes the image to GHCR for Minikube or AKS. |
 | `scripts/validate.ps1` | Runs local checks for required files and core security controls. |
 
 ## 2. Prerequisites
@@ -57,7 +57,7 @@ These are the five outcomes from the assessment brief.
 
 ### Outcome 1: The page is served from an image you built
 
-**Fulfilled locally.** `Dockerfile` builds the nginx image and `k8s/deployment.yaml` runs it. The local image is tagged `hello-world:local` and loaded into Minikube.
+**Fulfilled.** `Dockerfile` builds the nginx image. During local iteration it can be tagged `hello-world:local` and loaded into Minikube; GitHub Actions builds, scans, and publishes the same image to GHCR, then updates the Deployment to the immutable scanned commit-SHA image. Argo CD deploys that image, and AKS could pull it after registry access is configured.
 
 The image and Pod run with security controls including non-root execution, dropped capabilities, disabled privilege escalation, a default seccomp profile, a read-only root filesystem, probes, and resource limits.
 
@@ -67,9 +67,11 @@ The image and Pod run with security controls including non-root execution, dropp
 
 ### Outcome 3: The application reaches the cluster through automation
 
-**Fulfilled through GitOps.** GitHub Actions is the CI stage: it builds, scans, generates an SBOM, and publishes the image. Argo CD is the continuous delivery stage: it watches `main` and syncs `k8s/` into Minikube.
+**Fulfilled through GitOps.** GitHub Actions is the CI stage: it builds, scans, generates an SBOM, publishes the image, and updates the Git-managed image reference. Argo CD is the continuous delivery stage: it watches `main`, sees that commit, and syncs `k8s/` into Minikube.
 
-The local image build and Minikube preparation are manual because a hosted GitHub runner cannot reach a laptop-local cluster. Argo CD then performs the deployment from Git. Production AKS would use the same model with ACR and Argo CD inside the private cluster.
+The workflow includes a temporary, manual-only `bootstrap_publish` option so the first GHCR image can be published for demonstration. It reports Trivy findings without blocking that one bootstrap run. After the image exists, remove that option and restore the normal blocking-only scan path; it must not be used as a production exception.
+
+The local image build and Minikube preparation are manual during initial local setup because a hosted GitHub runner cannot reach a laptop-local cluster. Once the workflow publishes a passing image and updates Git, Argo CD performs the deployment from Git. AKS could use the same GHCR image and Argo CD configuration after configuring AKS pull access to the private GHCR package.
 
 ### Outcome 4: Scheduled vulnerability scanning runs inside Kubernetes
 
@@ -93,9 +95,9 @@ The local image is not available to a separate Trivy Pod through a registry. The
 
 ### AKS switch
 
-1. Build and publish the image to Azure Container Registry instead of relying on `hello-world:local`.
-2. Use an immutable ACR digest or release tag in a production Kustomize overlay.
-3. Give AKS pull access to ACR through managed identity or Workload Identity, not a long-lived registry password.
+1. Keep the GitHub Actions build, scan, SBOM, GHCR publication, and GitOps image-update stages.
+2. Configure AKS to pull the private GHCR package using a narrowly scoped read-only image-pull credential stored as a Kubernetes Secret or an equivalent federated identity integration.
+3. Keep using the immutable GHCR commit-SHA tag or digest instead of `hello-world:local`.
 4. Install Argo CD inside private AKS and configure the Application for the production overlay.
 5. Replace Minikube ingress/basic auth with TLS, DNS, and Entra ID/OIDC authentication.
 6. Add alerting for failed scan Jobs and Argo health failures.
