@@ -50,7 +50,7 @@ trivy --version
 git --version
 ```
 
-## 3. Outcomes And Fulfilment
+## 3. Outcomes And Security Expectations
 
 These are the five outcomes from the assessment brief.
 
@@ -81,6 +81,24 @@ Once the workflow publishes a passing image and updates Git, Argo CD performs th
 **Fulfilled locally.** `k8s/ingress.yaml` uses the `hello-world-auth` Secret for nginx basic authentication. Anonymous requests return `401`; valid demo credentials (Username: demo Password; change-me) return `200` and the page.
 
 Basic auth is only a local demonstration. Production would use TLS and an actual identity provider such as Entra ID linked to AKS.
+
+### Security Expectation 1: Pipeline credentials.
+How does your pipeline authenticate to the image registry, and to the cluster if it talks to it at all? Be ready to explain what you chose, what the alternatives were, and why. If a long-lived secret is stored anywhere, tell us where it lives, who can read it, and how you'd rotate it. If your deployment model means the pipeline never holds cluster credentials, say so — that's an answer, and a good one.
+
+### Security Expectation 2: Acting on scan results.
+A scheduled scan that writes to stdout meets the letter of the request and is worth very little. Who — or what — learns that a critical vulnerability has appeared, and through what path? Does anything block, alert, or roll back?
+
+### Security Expectation 3: The finding you can't fix.
+Sooner or later your nginx base image will carry a critical CVE with no patch available. What's your process? Describe it in prose; don't build it.
+
+### Security Expectation 4: Image hygiene.
+What base image did you choose, is it pinned, and does the container run as root? Justify each.
+
+### Security Expectation 5: Scan coverage.
+Scanning running workloads is one layer. What about scanning at build time, or scanning infrastructure code before it's applied? Tell us which layers you covered, which you skipped, and what each one catches that the others miss. Infrastructure scanning is a discussion point rather than something to build here — see section 4.
+
+### Security Expectation 6: Least privilege.
+What can your workload do that it doesn't need to be able to do — in the cluster, and in Azure?
 
 ## 4. Local Minikube And Future AKS
 
