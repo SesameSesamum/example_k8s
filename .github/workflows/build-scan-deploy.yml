@@ -9,7 +9,7 @@ on:
       bootstrap_publish:
         description: Temporary bootstrap only publish the image even when Trivy finds vulnerabilities
         required: true
-        default: false
+        default: true
         type: boolean
 
 permissions:
@@ -44,7 +44,7 @@ jobs:
 
       - name: Scan image for blocking vulnerabilities
         if: inputs.bootstrap_publish != true
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.28.0
         with:
           image-ref: ${{ env.IMAGE }}
           format: table
@@ -54,7 +54,7 @@ jobs:
 
       - name: Bootstrap scan report (non-blocking, temporary)
         if: inputs.bootstrap_publish == true
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.28.0
         with:
           image-ref: ${{ env.IMAGE }}
           format: table
