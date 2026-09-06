@@ -15,6 +15,7 @@ on:
 permissions:
   contents: write
   packages: write
+  id-token: write   # required for keyless cosign signing/attaching
 
 env:
   IMAGE: ghcr.io/${{ github.repository }}:${{ github.sha }}
@@ -33,6 +34,10 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cosign
+        if: github.event_name != 'pull_request'
+        uses: sigstore/cosign-installer@v3
 
       - name: Build image
         uses: docker/build-push-action@v6
@@ -110,8 +115,7 @@ jobs:
           artifact-name: sbom-${{ github.sha }}.spdx.json
           output-file: sbom-${{ github.sha }}.spdx.json
 
-      - name: Upload SBOM artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: sbom-${{ github.sha }}
-          path: sbom-${{ github.sha }}.spdx.json
+      - name: Attach SBOM to image in GHCR
+        if: github.event_name != 'pull_request'
+        run: |
+          cosign attach sbom --sbom sbom-${{ github.sha }}.spdx.json "${{ env.IMAGE }}"

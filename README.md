@@ -8,10 +8,10 @@ This repository contains a static nginx application, its container image, Kubern
 GitHub Actions: build -> scan -> SBOM -> publish to GHCR
                                       |
                                       v
-                              Argo CD watches Git
+                              Argo CD watches Git main
                                       |
                                       v
-                              Minikube or AKS
+                              Minikube or AKS cluster
 ```
 
 | Repository part | Responsibility |
@@ -29,7 +29,6 @@ GitHub Actions: build -> scan -> SBOM -> publish to GHCR
 | `k8s/kustomization.yaml` | Applies the Kubernetes resources as one unit. |
 | `argocd/application.yaml` | Tells Argo CD to watch `main` and sync `k8s/` into the cluster. |
 | `.github/workflows/build-scan-deploy.yml` | CI pipeline: builds, scans, generates an SBOM, and publishes the image to GHCR for Minikube or AKS. |
-| `scripts/validate.ps1` | Runs local checks for required files and core security controls. |
 
 ## 2. Prerequisites
 
@@ -67,7 +66,7 @@ The image and Pod run with security controls including non-root execution, dropp
 
 ### Outcome 3: The application reaches the cluster through automation
 
-**Fulfilled.** GitHub Actions is the CI stage: it builds, scans, generates an SBOM, publishes the image, and updates the Git-managed image reference. Argo CD is the continuous delivery stage: it watches `main`, sees that commit, and syncs `k8s/` into Minikube.
+**Fulfilled.** GitHub Actions is the CI stage: it builds, scans, publishes the image, generates an SBOM and attaches it to the image, and updates the Git-managed image reference. Argo CD is the continuous delivery stage: it watches `main`, sees that commit, and syncs `k8s/` into Minikube.
 
 Usually the GitHub actions pipeline blocks if the Trivy scan detect any CRITICAL or HIGH vulnerabilities, of which this nginx-image has a ton. I've added a skip-scan input just to be able to push the initial image onto the GHCR for our demonstration.
 
@@ -107,6 +106,7 @@ Run this sequence from PowerShell.
 ### Build and scan
 
 ```powershell
+echo $GITHUB_TOKEN | docker login ghcr.io -u sesamesesamum --password-stdin
 docker build --tag hello-world:local .
 trivy image --severity HIGH,CRITICAL --ignore-unfixed hello-world:local
 trivy image --format spdx-json --output sbom-hello-world.spdx.json hello-world:local
@@ -120,7 +120,7 @@ The image scan may return exit code `1` because vulnerabilities are present. Tha
 ```powershell
 minikube start --driver=docker --ports=127.0.0.1:18080:30080
 minikube addons enable ingress
-kubectl -n ingress-nginx patch service ingress-nginx-controller --type=merge -p '{"spec":{"ports":[{"name":"http","port":80,"targetPort":"http","protocol":"TCP","nodePort":30080},{"name":"https","port":443,"targetPort":"https","protocol":"TCP","nodePort":30443}]}}'
+kubectl -n ingress-nginx patch service ingress-nginx-controller --type=merge -p --% "{\"spec\":{\"ports\":[{\"name\":\"http\",\"port\":80,\"targetPort\":\"http\",\"protocol\":\"TCP\",\"nodePort\":30080},{\"name\":\"https\",\"port\":443,\"targetPort\":\"https\",\"protocol\":\"TCP\",\"nodePort\":30443}]}}"
 minikube image load hello-world:local
 
 $auth = (docker run --rm httpd:2.4-alpine htpasswd -nbB demo 'change-me' | Out-String).Trim()
@@ -136,12 +136,11 @@ The Secret is generated locally and must not be committed.
 
 Set the `example_k8s` GHCR package visibility to Private (package settings -> Danger Zone -> Change visibility). GitHub Actions can still push to a private package with the same `GITHUB_TOKEN`; only pulling requires a credential.
 
-Create a classic PAT scoped to `read:packages` only, then create both Secrets Minikube needs:
+Create a classic PAT scoped to `read:packages` only. Paste it directly into the variable below rather than using `Read-Host`; an interactive secure prompt can silently capture a stray character instead of the real value when this block is pasted in as one paste, which produces a broken credential and a `403 Forbidden` pull error that looks unrelated to the cause:
 
 ```powershell
 $ghcrUser = 'sesamesesamum'
-$ghcrToken = Read-Host -Prompt 'GHCR read-only PAT' -AsSecureString
-$ghcrTokenPlain = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($ghcrToken))
+$ghcrTokenPlain = 'REPLACE_WITH_YOUR_PAT'  # paste your token here, then run; never commit this file with the real value
 
 kubectl -n hello-world create secret docker-registry ghcr-pull-secret `
   --docker-server=ghcr.io `
@@ -224,16 +223,20 @@ $response.Content | Select-String 'Hello, Kubernetes'
 
 With a `127.0.0.1 hello-world.local` entry in the Windows hosts file, the same URL also works directly in a browser: `http://hello-world.local:18080/`.
 
+In which case you can just go to the URL on a browser and login using username demo and password change-me
+
 ### Demonstrate the scheduled scan
 
 Argo manages the scan target from `k8s/scan-config.yaml`. Trigger a Job immediately:
 
 ```powershell
-kubectl -n hello-world delete job scan-now-fixed --ignore-not-found
-kubectl -n hello-world create job --from=cronjob/hello-world-vulnerability-scan scan-now-fixed
-kubectl -n hello-world logs -f job/scan-now-fixed
-kubectl -n hello-world get job scan-now-fixed
+kubectl -n hello-world delete job scheduled-trivy-scan --ignore-not-found
+kubectl -n hello-world create job --from=cronjob/hello-world-vulnerability-scan scheduled-trivy-scan
+kubectl -n hello-world logs -f job/scheduled-trivy-scan
+kubectl -n hello-world get job scheduled-trivy-scan
 ```
+
+For our demo, we can see the result of the scan here: https://ntfy.sh/hello-world-scan-example-k8s
 
 The scan should download its database and print a vulnerability report. The Job may be `Failed` when HIGH or CRITICAL findings are detected; that is the configured security gate, not a scanner startup failure.
 
