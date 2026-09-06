@@ -34,3 +34,7 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
+    # no ipBlock since ntfy.sh has no fixed IP; scopes to HTTPS only, not to a specific host
+    - ports:
+        - protocol: TCP
+          port: 443

@@ -22,7 +22,7 @@ GitHub Actions: build -> scan -> SBOM -> publish to GHCR
 | `k8s/deployment.yaml` | Runs the application with non-root execution, read-only root filesystem, dropped capabilities, probes, and resource limits. GitHub Actions updates its image reference to the scanned GHCR SHA. |
 | `k8s/service.yaml` | Provides internal ClusterIP access to the application. |
 | `k8s/ingress.yaml` | Provides HTTP access with nginx basic authentication. |
-| `k8s/serviceaccount.yaml` | Gives the workload no API permissions and no mounted token. |
+| `k8s/serviceaccount.yaml` | Gives the workload no API permissions, no mounted token, and a scoped read-only `imagePullSecrets` credential for the private GHCR image. |
 | `k8s/network-policy.yaml` | Restricts application traffic to ingress-nginx and DNS egress. |
 | `k8s/trivy-cronjob.yaml` | Runs the scheduled in-cluster Trivy scan and fails on HIGH or CRITICAL findings. |
 | `k8s/scan-config.yaml` | Selects the registry image scanned by the CronJob. It uses pinned public nginx for the local demo; production can point to the GHCR image. |
@@ -57,7 +57,7 @@ These are the five outcomes from the assessment brief.
 
 ### Outcome 1: The page is served from an image you built
 
-**Fulfilled.** GitHub Actions builds, scans, and publishes the same image to GHCR, then updates the Deployment to the immutable scanned commit-SHA image. Argo CD deploys that image in our local minikube cluster, and in the future solution AKS could pull it after registry access is configured. 
+**Fulfilled.** GitHub Actions builds, scans, and publishes the same image to a private GHCR package, then updates the Deployment to the immutable scanned commit-SHA image. Argo CD deploys that image in our local minikube cluster; Minikube authenticates the pull with a narrowly scoped, read-only `imagePullSecrets` credential rather than a public, unauthenticated pull.
 
 The image and Pod run with security controls including non-root execution, dropped capabilities, disabled privilege escalation, a default seccomp profile, a read-only root filesystem, probes, and resource limits.
 
@@ -75,31 +75,28 @@ Once the workflow publishes a passing image and updates Git, Argo CD performs th
 
 ### Outcome 4: Scheduled vulnerability scanning runs inside Kubernetes
 
-**Fulfilled, with limited alerting.** `k8s/trivy-cronjob.yaml` runs daily, downloads the vulnerability database, scans the configured registry image, and fails on HIGH or CRITICAL findings. Job status and logs are the human-visible result in this demonstration.
+**Fulfilled** `k8s/trivy-cronjob.yaml` runs daily, downloads the vulnerability database, scans the configured registry image, and fails on HIGH or CRITICAL findings. Job status and logs are then posted to https://ntfy.sh/hello-world-scan-example-k8s for humans to read. In our ideal solution, this would post directly to a teams channel through webhooks.
 
 ### Outcome 5: Unauthenticated users cannot reach the page
 
-**Fulfilled locally.** `k8s/ingress.yaml` uses the `hello-world-auth` Secret for nginx basic authentication. Anonymous requests return `401`; valid demo credentials return `200` and the page.
+**Fulfilled locally.** `k8s/ingress.yaml` uses the `hello-world-auth` Secret for nginx basic authentication. Anonymous requests return `401`; valid demo credentials (Username: demo Password; change-me) return `200` and the page.
 
-Basic auth is only a local demonstration. Production would use TLS and an OIDC identity provider such as Entra ID through an identity-aware proxy.
+Basic auth is only a local demonstration. Production would use TLS and an actual identity provider such as Entra ID linked to AKS.
 
 ## 4. Local Minikube And Future AKS
 
 ### Local solution
 
-Minikube substitutes for AKS during the demonstration. Docker builds `hello-world:local`, Minikube receives that image directly, and Argo CD runs inside the cluster and watches the public GitHub repository.
-
-The local image is not available to a separate Trivy Pod through a registry. Therefore `k8s/scan-config.yaml` points to the public `nginx:1.27.5-alpine` image for the scheduled scan. The locally built image is scanned by the local Trivy command and by GitHub Actions.
+Minikube substitutes for AKS during the demonstration. The Github actions pipeline still publishes the image and Minikube receives that image from GHCR while Argo CD runs inside the cluster and watches the public GitHub repository. The GHCR package itself is private, so Minikube pulls it using a read-only credential in `ghcr-pull-secret`, and the Trivy pod created for the daily scan authenticates the same way through `ghcr-scan-credentials` to scan that private image, pushing notifications to ntfy.sh.
 
 ### AKS switch
 
 1. Keep the GitHub Actions build, scan, SBOM, GHCR publication, and GitOps image-update stages.
-2. Configure AKS to pull the private GHCR package using a narrowly scoped read-only image-pull credential stored as a Kubernetes Secret or an equivalent federated identity integration.
+2. AKS would replace the static, PAT-based `ghcr-pull-secret`/`ghcr-scan-credentials` used here with a federated identity integration (Workload Identity), avoiding a long-lived credential entirely.
 3. Keep using the immutable GHCR commit-SHA tag or digest instead of `hello-world:local`.
 4. Install Argo CD inside private AKS and configure the Application for the production overlay.
 5. Replace Minikube ingress/basic auth with TLS, DNS, and Entra ID/OIDC authentication.
-6. Add alerting for failed scan Jobs and Argo health failures.
-7. Add admission enforcement with Kyverno or Gatekeeper if required.
+6. Swap the alerting from ntfy.sh to something like teams or slack notifications.
 
 No Azure infrastructure is provisioned here, as requested by the assessment.
 
@@ -121,8 +118,9 @@ The image scan may return exit code `1` because vulnerabilities are present. Tha
 ### Start Minikube and create demo authentication
 
 ```powershell
-minikube start --driver=docker
+minikube start --driver=docker --ports=127.0.0.1:18080:30080
 minikube addons enable ingress
+kubectl -n ingress-nginx patch service ingress-nginx-controller --type=merge -p '{"spec":{"ports":[{"name":"http","port":80,"targetPort":"http","protocol":"TCP","nodePort":30080},{"name":"https","port":443,"targetPort":"https","protocol":"TCP","nodePort":30443}]}}'
 minikube image load hello-world:local
 
 $auth = (docker run --rm httpd:2.4-alpine htpasswd -nbB demo 'change-me' | Out-String).Trim()
@@ -130,7 +128,34 @@ kubectl create namespace hello-world --dry-run=client -o yaml | kubectl apply -f
 kubectl -n hello-world create secret generic hello-world-auth --from-literal=auth=$auth --dry-run=client -o yaml | kubectl apply -f -
 ```
 
+The `--ports` flag publishes the container's NodePort to `127.0.0.1:18080` at Minikube's creation time, and the `kubectl patch` pins the ingress controller to that same NodePort. This binding is owned by Docker, not by a foreground command, so `http://hello-world.local:18080/` stays reachable for as long as `minikube status` reports the cluster running — unlike `kubectl port-forward`, which dies the moment its terminal closes or the machine sleeps.
+
 The Secret is generated locally and must not be committed.
+
+### Make the GHCR image private and create pull credentials
+
+Set the `example_k8s` GHCR package visibility to Private (package settings -> Danger Zone -> Change visibility). GitHub Actions can still push to a private package with the same `GITHUB_TOKEN`; only pulling requires a credential.
+
+Create a classic PAT scoped to `read:packages` only, then create both Secrets Minikube needs:
+
+```powershell
+$ghcrUser = 'sesamesesamum'
+$ghcrToken = Read-Host -Prompt 'GHCR read-only PAT' -AsSecureString
+$ghcrTokenPlain = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($ghcrToken))
+
+kubectl -n hello-world create secret docker-registry ghcr-pull-secret `
+  --docker-server=ghcr.io `
+  --docker-username=$ghcrUser `
+  --docker-password=$ghcrTokenPlain `
+  --dry-run=client -o yaml | kubectl apply -f -
+
+kubectl -n hello-world create secret generic ghcr-scan-credentials `
+  --from-literal=username=$ghcrUser `
+  --from-literal=password=$ghcrTokenPlain `
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+`ghcr-pull-secret` lets kubelet pull the private image through `k8s/serviceaccount.yaml`'s `imagePullSecrets`. `ghcr-scan-credentials` is separate because `imagePullSecrets` only covers kubelet pulls, not Trivy's own registry calls when scanning the image in `k8s/scan-config.yaml`; Trivy reads `TRIVY_USERNAME`/`TRIVY_PASSWORD` directly. Neither Secret is committed to Git.
 
 ### Deploy through Argo CD
 
@@ -179,11 +204,7 @@ kubectl -n hello-world rollout status deployment/hello-world --timeout=120s
 kubectl -n hello-world get pods,svc,ingress,cronjob
 ```
 
-In a second terminal, forward the ingress controller:
-
-```powershell
-kubectl -n ingress-nginx port-forward service/ingress-nginx-controller 18080:80
-```
+No port-forward is needed; the ingress is already reachable at `hello-world.local:18080` as long as the Minikube container is running.
 
 Anonymous access should return `401`:
 
@@ -200,6 +221,8 @@ $response = Invoke-WebRequest http://127.0.0.1:18080/ -Headers @{ Host = 'hello-
 $response.StatusCode
 $response.Content | Select-String 'Hello, Kubernetes'
 ```
+
+With a `127.0.0.1 hello-world.local` entry in the Windows hosts file, the same URL also works directly in a browser: `http://hello-world.local:18080/`.
 
 ### Demonstrate the scheduled scan
 
