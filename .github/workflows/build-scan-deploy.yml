@@ -44,13 +44,36 @@ jobs:
 
       - name: Scan image for blocking vulnerabilities
         if: inputs.bootstrap_publish != true
+        id: trivy-blocking
+        continue-on-error: true
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.IMAGE }}
-          format: table
-          exit-code: 1
+          format: json
+          output: trivy-results.json
+          exit-code: 0
           ignore-unfixed: true
           severity: CRITICAL,HIGH
+
+      - name: Report and enforce vulnerability threshold
+        if: inputs.bootstrap_publish != true
+        shell: bash
+        run: |
+          if [ ! -f trivy-results.json ]; then
+            echo "::error::Trivy did not produce a results file. The scan could not be evaluated."
+            exit 1
+          fi
+
+          critical_count=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' trivy-results.json)
+          high_count=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length' trivy-results.json)
+          echo "Trivy results: ${critical_count} CRITICAL, ${high_count} HIGH vulnerabilities."
+
+          if [ "$critical_count" -gt 0 ] || [ "$high_count" -gt 0 ]; then
+            echo "::error::Trivy blocked publication: ${critical_count} CRITICAL and ${high_count} HIGH vulnerabilities discovered."
+            exit 1
+          fi
+
+          echo "Trivy security gate passed: no HIGH or CRITICAL vulnerabilities discovered."
 
       - name: Bootstrap scan report (non-blocking, temporary)
         if: inputs.bootstrap_publish == true
