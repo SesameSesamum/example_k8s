@@ -24,6 +24,7 @@ spec:
           securityContext:
             seccompProfile:
               type: RuntimeDefault
+            fsGroup: 1000
           containers:
             - name: trivy
               image: aquasec/trivy:0.58.1
@@ -45,6 +46,8 @@ spec:
                       name: scan-config
                       key: image
                 - name: TRIVY_CACHE_DIR
+                  value: /tmp/trivy-cache
+                - name: TMPDIR
                   value: /tmp/trivy-cache
               securityContext:
                 runAsNonRoot: true
