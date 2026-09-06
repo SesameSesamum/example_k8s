@@ -85,21 +85,44 @@ Basic auth is only a local demonstration. Production would use TLS and an actual
 ### Security Expectation 1: Pipeline credentials.
 How does your pipeline authenticate to the image registry, and to the cluster if it talks to it at all? Be ready to explain what you chose, what the alternatives were, and why. If a long-lived secret is stored anywhere, tell us where it lives, who can read it, and how you'd rotate it. If your deployment model means the pipeline never holds cluster credentials, say so — that's an answer, and a good one.
 
+Answer:
+I made it so that the pipeline on Github actions authenticates to the image registry using a GitHub classic PAT with read:package permissions only. The PAT expires in one year, and without the PAT the image is private and can't be pulled otherwise. After a year, the PAT should require a refresh. No one has access to the PAT, and it's handled as a secret by the k8s cluster to prevent it leaking in logs or elsewhere. This does mean we have some necessary manual steps when setting up the minikube cluster for the first time.
+The pipeline doesn't talk to the cluster at all, it simply builds, scans, and publishes the image to the GHCR. The cluster reaches out and grabs the image from the registry, sidestepping needing to connect the pipeline to my locak minikube OR a hypothetical future implementation on AKS
+
 ### Security Expectation 2: Acting on scan results.
 A scheduled scan that writes to stdout meets the letter of the request and is worth very little. Who — or what — learns that a critical vulnerability has appeared, and through what path? Does anything block, alert, or roll back?
+
+Answer:
+For now I've simply made the scheduled scan dump the results of the scan to https://ntfy.sh/hello-world-scan-example-k8s, which I have also manually subscribed to find alerts. Obviously this is terrible, as I don't even get notifications unless I have the tab open in a browser somewhere or an app on my phone. Ideally in prod it'd simply be sending notifications to an appropriate teams or slack channel, and ONLY when unacceptable amounts of vulnerabilities are detected that require immediate attention. Notification spam isn't helpful and desensitises devs.
 
 ### Security Expectation 3: The finding you can't fix.
 Sooner or later your nginx base image will carry a critical CVE with no patch available. What's your process? Describe it in prose; don't build it.
 
+Answer: It depends on what the actual CVE is and whether it affects us. If it's for a module or library we don't even use, in which case it shouldn't affect us. We can also check if it's something we can mitigate by either turning off xyz module. We could also see if there WILL be a fix that just hasn't released yet vs no fix ever, in which case we might make an exception if we think the fix is coming soon. Either way our alerts should let us know if we have any vulnerabilities as described (Trivy is configured to treat CRITICAL and HIGH as blockers)
+
 ### Security Expectation 4: Image hygiene.
 What base image did you choose, is it pinned, and does the container run as root? Justify each.
+
+Answer: Base image is nginx:1.27.5-alpine.
+It's pinned to a specific version tag rather than  latest, which prevents unexpected  changes causing problems on rebuilds.
+We're not running in root, I've made sure of that. In the dockerfile we swap to USER nginx, and in the deployment.yaml file we're purposely not using the root user (UID 101 is nginx again).
+Additionally I've prevented being able to escalate privledges, writing to the filesystem (hello world application shouldn't need that), any account tokens aren't automatically mounted, and we default the seccomp set.
 
 ### Security Expectation 5: Scan coverage.
 Scanning running workloads is one layer. What about scanning at build time, or scanning infrastructure code before it's applied? Tell us which layers you covered, which you skipped, and what each one catches that the others miss. Infrastructure scanning is a discussion point rather than something to build here — see section 4.
 
+Answer:
+I'm scanning the image once at build time, then regularly once the cluster is up. Scanning once at build time lets us know before we go through the costly deployment step whether the image has any known issues, but doesn't cover when images slowly get out of date and gain vulnerabilities. The regular chron job as asked for by the brief helps remedy that issue, but obviously doesn't block deployments seeing as it's running on the same cluster.
+
+Infrastructure scanning would be for scanning the k8s config that's in this repo, I think in this case it'd be something like kube-linter for mistakes in the manifests. Never used it, but from what I know it covers things like privileged containers, missing security contexts, over-permissive network policies etc. If we were to implement this, it'd go in the same CI pipeline in Github actions as the build scan.
+
 ### Security Expectation 6: Least privilege.
 What can your workload do that it doesn't need to be able to do — in the cluster, and in Azure?
 
+Answer:
+Service account for hello-world has literally 0 permissions, simply exists to attach the GitHub PAT to. The PAT itself is worth talking about, it only has read permissions specifically on packages, no other permissions within GitHub. This wouldn't change in Azure.
+
+Network policy is default-deny, and built up to allow very specific things in and out. Problem with the egress though is that because ntfy.sh doesn't have a fixed IP, I had to make it allow all destinations for TCP 443 traffic, so technically speaking the hello-world workload can egress to any destination on the internet. Obviously fixed if we move off ntfy.sh for the full AKS solution.
 ## 4. Local Minikube And Future AKS
 
 ### Local solution
