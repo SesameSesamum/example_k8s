@@ -4,4 +4,4 @@ metadata:
   name: scan-config
   namespace: hello-world
 data:
-  image: ghcr.io/REPLACE_WITH_GITHUB_OWNER/hello-world:main
+  image: nginx:1.27.5-alpine

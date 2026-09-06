@@ -136,7 +136,7 @@ For production AKS, GitHub Actions would publish the scanned image to ACR and Ar
 | `k8s/serviceaccount.yaml` | Gives the workload an identity with no API permissions and no automatically mounted token. |
 | `k8s/network-policy.yaml` | Allows application traffic only from ingress-nginx and allows DNS egress. |
 | `k8s/trivy-cronjob.yaml` | Re-scans the configured registry image on a schedule and fails on HIGH/CRITICAL findings. |
-| `k8s/scan-config.yaml` | Holds the image reference used by the scheduled scan. Replace the placeholder with your GHCR image. |
+| `k8s/scan-config.yaml` | Holds the registry-accessible image used by the scheduled scan. It defaults to pinned public nginx for Minikube; production should use the published ACR image. |
 | `k8s/kustomization.yaml` | Applies the Kubernetes resources as one repeatable unit. |
 | `argocd/application.yaml` | Defines the Argo CD Application that watches `main` and automatically syncs `k8s/` to Minikube. |
 | `.github/workflows/build-scan-deploy.yml` | Builds, scans, creates an SBOM, and publishes to GHCR for the future AKS delivery path. |
