@@ -22,7 +22,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: nginx
-          image: ghcr.io/sesamesesamum/example_k8s:c81c0fe06d43cdc7a974e3b7d921ede7dc5dd06d
+          image: ghcr.io/sesamesesamum/example_k8s:096118c873294a819219b0eabddbe5d9968fe249
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
