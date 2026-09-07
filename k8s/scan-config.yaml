@@ -4,5 +4,5 @@ metadata:
   name: scan-config
   namespace: hello-world
 data:
-  image: ghcr.io/sesamesesamum/example_k8s:4b9c613b424b614c45df86d135b7b363ffb14dd2
+  image: ghcr.io/sesamesesamum/example_k8s:e0f26720e0fbe65b061084ffe6d849c6fb5d843c
   ntfy-url: https://ntfy.sh/hello-world-scan-example-k8s
