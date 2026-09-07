@@ -150,6 +150,7 @@ Run this sequence from PowerShell.
 echo $GITHUB_TOKEN | docker login ghcr.io -u sesamesesamum --password-stdin
 minikube start --driver=docker --ports=127.0.0.1:18080:30080
 minikube addons enable ingress
+# Patch the ingress-nginx-controller ton not pick a random port so that our setup always works
 kubectl -n ingress-nginx patch service ingress-nginx-controller --type=merge -p --% "{\"spec\":{\"ports\":[{\"name\":\"http\",\"port\":80,\"targetPort\":\"http\",\"protocol\":\"TCP\",\"nodePort\":30080},{\"name\":\"https\",\"port\":443,\"targetPort\":\"https\",\"protocol\":\"TCP\",\"nodePort\":30443}]}}"
 
 $auth = (docker run --rm httpd:2.4-alpine htpasswd -nbB demo 'change-me' | Out-String).Trim()
