@@ -144,25 +144,13 @@ No Azure infrastructure is provisioned here, as requested by the assessment.
 
 Run this sequence from PowerShell.
 
-### Build and scan
-
-```powershell
-echo $GITHUB_TOKEN | docker login ghcr.io -u sesamesesamum --password-stdin
-docker build --tag hello-world:local .
-trivy image --severity HIGH,CRITICAL --ignore-unfixed hello-world:local
-trivy image --format spdx-json --output sbom-hello-world.spdx.json hello-world:local
-trivy config --severity HIGH,CRITICAL k8s/
-```
-
-The image scan may return exit code `1` because vulnerabilities are present. That is the intended security gate. The configuration scan should report zero HIGH/CRITICAL misconfigurations.
-
 ### Start Minikube and create demo authentication
 
 ```powershell
+echo $GITHUB_TOKEN | docker login ghcr.io -u sesamesesamum --password-stdin
 minikube start --driver=docker --ports=127.0.0.1:18080:30080
 minikube addons enable ingress
 kubectl -n ingress-nginx patch service ingress-nginx-controller --type=merge -p --% "{\"spec\":{\"ports\":[{\"name\":\"http\",\"port\":80,\"targetPort\":\"http\",\"protocol\":\"TCP\",\"nodePort\":30080},{\"name\":\"https\",\"port\":443,\"targetPort\":\"https\",\"protocol\":\"TCP\",\"nodePort\":30443}]}}"
-minikube image load hello-world:local
 
 $auth = (docker run --rm httpd:2.4-alpine htpasswd -nbB demo 'change-me' | Out-String).Trim()
 kubectl create namespace hello-world --dry-run=client -o yaml | kubectl apply -f -
@@ -287,4 +275,24 @@ The scan should download its database and print a vulnerability report. The Job 
 ```powershell
 kubectl delete namespace hello-world
 minikube stop
+```
+
+## Testing commands
+
+### Manually building and scanning (for testing, GitHub actions takes the place of building and scanning)
+
+```powershell
+echo $GITHUB_TOKEN | docker login ghcr.io -u sesamesesamum --password-stdin
+docker build --tag hello-world:local .
+trivy image --severity HIGH,CRITICAL --ignore-unfixed hello-world:local
+trivy image --format spdx-json --output sbom-hello-world.spdx.json hello-world:local
+trivy config --severity HIGH,CRITICAL k8s/
+```
+
+The image scan may return exit code `1` because vulnerabilities are present. That is the intended security gate. The configuration scan should report zero HIGH/CRITICAL misconfigurations.
+
+### Loading the hello-world:local image locally
+
+```powershell
+minikube image load hello-world:local
 ```
